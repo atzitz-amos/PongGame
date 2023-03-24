@@ -3,6 +3,11 @@ import random
 from tkinter import Toplevel, Tk, Label
 
 
+class Team:
+    TEAM_LEFT = 0
+    TEAM_RIGHT = 1
+
+
 class CollisionStatus(enum.Enum):
     NO_COLLISION = 0
     LEFT = 1
@@ -10,8 +15,8 @@ class CollisionStatus(enum.Enum):
     TOP = 3
     BOTTOM = 4
 
-    LEFT_CHANGE_SCREEN = 5
-    RIGHT_CHANGE_SCREEN = 6
+    LEFT_LOST = -1
+    RIGHT_LOST = -2
 
 
 class BouncingWindow(Toplevel):
@@ -36,6 +41,8 @@ class BouncingWindow(Toplevel):
 
     def update_movement(self):
         status = self.collider.collide(self.x, self.y, 100, 100)
+        if status in (CollisionStatus.LEFT_LOST, CollisionStatus.RIGHT_LOST):
+            return
         if status != CollisionStatus.NO_COLLISION:
             self.change_direction(status)
         self.move()
@@ -62,41 +69,59 @@ class ColliderNormal:
         self.window = window
 
     def collide(self, x, y, w, h):
-        left, right, top = self.screen_dim
-        bottom_start = self.window.get_position()
-        bottom_end = bottom_start[0] + self.window.width
+        left, right, top, bottom = self.screen_dim
 
-        if x + w > right:
-            return CollisionStatus.RIGHT
-        if x < left:
-            return CollisionStatus.LEFT
+        win_startY, win_startX = self.window.get_position()
+
+        win_end = win_startY + self.window.height
+
         if y < top:
             return CollisionStatus.TOP
-        if y + h > bottom_start[1] and bottom_start[0] < x < bottom_end:
+        if y + h > bottom:
             return CollisionStatus.BOTTOM
+
+        if x < left:
+            MultiplayerManager.inst().scored(Team.TEAM_RIGHT)
+            return CollisionStatus.LEFT_LOST
+        if x + w > right:
+            MultiplayerManager.inst().scored(Team.TEAM_LEFT)
+            return CollisionStatus.RIGHT_LOST
 
         return CollisionStatus.NO_COLLISION
 
 
 class MainWindow(Tk):
+    speed = 6
+    border = 10
 
-    def __init__(self):
+    def __init__(self, screen_width, screen_height):
         Tk.__init__(self)
 
         self.wm_resizable(False, False)
 
-        self.collider = ColliderNormal((10, 1900, 10), self)
+        self.screen_width = screen_width
+        self.screen_height = screen_height
+
+        self.collider = ColliderNormal((self.border, self.screen_width, self.border, self.screen_height), self)
         self.bouncing_window = BouncingWindow(self.collider)
 
-        self.width = 300
-        self.height = 100
+        self.width = 100
+        self.height = 350
         self.x = 660
         self.y = 680
 
         self.update_geometry()
 
+        self.movement = 0
+
         self.bind("<Left>", lambda e: self.change_position(-1))
         self.bind("<Right>", lambda e: self.change_position(1))
+        self.bind("<KeyRelease-Left>", lambda e: self.change_position(0))
+        self.bind("<KeyRelease-Right>", lambda e: self.change_position(0))
+        self.bind("<Up>", lambda e: self.change_position(-1))
+        self.bind("<Down>", lambda e: self.change_position(1))
+        self.bind("<KeyRelease-Up>", lambda e: self.change_position(0))
+        self.bind("<KeyRelease-Down>", lambda e: self.change_position(0))
 
         self.dumm_widget = Label(self)
         self.dumm_widget.pack()
@@ -105,11 +130,11 @@ class MainWindow(Tk):
         self.focus_force()
 
     def change_position(self, key):
-        self.x += key * 30
+        self.movement = key
 
     def update_ball(self):
         self.bouncing_window.update_movement()
-        self.update_geometry()
+        self.slide()
         self.lift()
         self.after(10, self.update_ball)
 
@@ -123,6 +148,46 @@ class MainWindow(Tk):
     def get_position(self):
         return self.x, self.y
 
+    def slide(self):
+        self.y += self.movement * self.speed
+        self.assert_in_bounds()
+        self.update_geometry()
+
+    def assert_in_bounds(self):
+        pass
+
+
+class MultiplayerManager:
+    _INSTANCE = None
+
+    @classmethod
+    def inst(cls):
+        return cls._INSTANCE
+
+    def bbox(self, team):
+        pass
+
+    def scored(self, team):
+        pass
+
+
+class Main:
+
+    def __init__(self, host):
+        self.isHost = host
+        if self.isHost:
+            self.init_host_mode()
+        else:
+            self.init_normal_mode()
+
+    def init_host_mode(self):
+        MultiplayerManager(True)
+        self.window = MainWindow(Team.TEAM_LEFT)
+
+    def init_normal_mode(self):
+        MultiplayerManager(False)
+        self.window = Team.TEAM_RIGHT
+
 
 if __name__ == '__main__':
-    MainWindow().run()
+    MainWindow(1920, 1080).run()
