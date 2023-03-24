@@ -1,6 +1,6 @@
 import enum
 import random
-from tkinter import Toplevel, Tk, Label
+from tkinter import Toplevel, Tk
 
 
 class Team:
@@ -68,7 +68,7 @@ class ColliderNormal:
         self.screen_dim = screen_dim
         self.window = window
 
-    def collide(self, x, y, w, h):
+    def collide(self, x, y, w, h, horizontal=True):
         left, right, top, bottom = self.screen_dim
 
         win_startY, win_startX = self.window.get_position()
@@ -80,39 +80,76 @@ class ColliderNormal:
         if y + h > bottom:
             return CollisionStatus.BOTTOM
 
-        if x < left:
-            MultiplayerManager.inst().scored(Team.TEAM_RIGHT)
+        if x < left and horizontal:
+            Main.inst().scored(Team.TEAM_RIGHT)
             return CollisionStatus.LEFT_LOST
-        if x + w > right:
-            MultiplayerManager.inst().scored(Team.TEAM_LEFT)
+        if x + w > right and horizontal:
+            Main.inst().scored(Team.TEAM_LEFT)
             return CollisionStatus.RIGHT_LOST
 
         return CollisionStatus.NO_COLLISION
 
 
-class MainWindow(Tk):
-    speed = 6
+class BaseWindow(Tk):
+    speed = 4
     border = 10
 
-    def __init__(self, screen_width, screen_height):
+    def __init__(self, team, screen_width, screen_height):
         Tk.__init__(self)
 
         self.wm_resizable(False, False)
 
+        self.team = team
         self.screen_width = screen_width
         self.screen_height = screen_height
 
         self.collider = ColliderNormal((self.border, self.screen_width, self.border, self.screen_height), self)
-        self.bouncing_window = BouncingWindow(self.collider)
 
         self.width = 100
         self.height = 350
-        self.x = 660
-        self.y = 680
+        self.x = screen_width - 340 if team == Team.TEAM_RIGHT else 240
+        self.y = int(screen_height / 2 - self.height)
 
         self.update_geometry()
 
         self.movement = 0
+
+    def change_position(self, key):
+        self.movement = key
+
+    def tick(self):
+        self.slide()
+        self.lift()
+        self.after(10, self.tick)
+
+    def run(self):
+        self.after(10, self.tick)
+
+    def update_geometry(self):
+        if self.x == 240:
+            print(f"{self.width}x{self.height}+{self.x}+{self.y}")
+        self.wm_geometry(f"{self.width}x{self.height}+{self.x}+{self.y}")
+
+    def get_position(self):
+        return self.x, self.y
+
+    def slide(self):
+        if not self.assert_in_bounds():
+            print("Not in Bounds")
+            self.y = 10 if self.y < 0 else self.screen_height - 10
+            return
+        self.y += self.movement * self.speed
+        self.update_geometry()
+
+    def assert_in_bounds(self):
+        return self.collider.collide(self.x, self.y, self.width, self.height,
+                                     horizontal=False) == CollisionStatus.NO_COLLISION
+
+
+class PrimaryWindow(BaseWindow):
+
+    def __init__(self, team, screen_width, screen_height):
+        super().__init__(team, screen_width, screen_height)
 
         self.bind("<Left>", lambda e: self.change_position(-1))
         self.bind("<Right>", lambda e: self.change_position(1))
@@ -123,71 +160,75 @@ class MainWindow(Tk):
         self.bind("<KeyRelease-Up>", lambda e: self.change_position(0))
         self.bind("<KeyRelease-Down>", lambda e: self.change_position(0))
 
-        self.dumm_widget = Label(self)
-        self.dumm_widget.pack()
-
-        self.wait_visibility(self)
-        self.focus_force()
-
-    def change_position(self, key):
-        self.movement = key
-
-    def update_ball(self):
-        self.bouncing_window.update_movement()
+    def tick(self):
         self.slide()
         self.lift()
-        self.after(10, self.update_ball)
+        self.focus_force()
+        self.after(10, self.tick)
 
-    def run(self):
-        self.after(10, self.update_ball)
-        self.mainloop()
 
-    def update_geometry(self):
-        self.wm_geometry(f"{self.width}x{self.height}+{self.x}+{self.y}")
+class SecondaryWindow(BaseWindow):
+    def __init__(self, team, screen_width, screen_height):
+        super().__init__(team, screen_width, screen_height)
 
-    def get_position(self):
-        return self.x, self.y
-
-    def slide(self):
-        self.y += self.movement * self.speed
-        self.assert_in_bounds()
         self.update_geometry()
 
-    def assert_in_bounds(self):
-        pass
+    def change_position(self, key):
+        return
 
 
 class MultiplayerManager:
+    def __init__(self, host):
+        self.host = host
+
+
+class Main:
     _INSTANCE = None
 
     @classmethod
     def inst(cls):
         return cls._INSTANCE
 
-    def bbox(self, team):
-        pass
-
-    def scored(self, team):
-        pass
-
-
-class Main:
-
-    def __init__(self, host):
+    def __init__(self, host, screen):
         self.isHost = host
+        self.screen = screen
+
+        self.points = {Team.TEAM_RIGHT: 0, Team.TEAM_LEFT: 0}
+        self.window = None
+        self.swindow = None
+        self.manager = None
         if self.isHost:
             self.init_host_mode()
         else:
             self.init_normal_mode()
 
+        self._INSTANCE = self
+
     def init_host_mode(self):
-        MultiplayerManager(True)
-        self.window = MainWindow(Team.TEAM_LEFT)
+        self.manager = MultiplayerManager(True)
+        self.window = PrimaryWindow(Team.TEAM_LEFT, self.screen[0], self.screen[1])
+        self.swindow = SecondaryWindow(Team.TEAM_RIGHT, self.screen[0], self.screen[1])
 
     def init_normal_mode(self):
-        MultiplayerManager(False)
-        self.window = Team.TEAM_RIGHT
+        self.manager = MultiplayerManager(False)
+        self.window = PrimaryWindow(Team.TEAM_RIGHT, self.screen[0], self.screen[1])
+        self.swindow = SecondaryWindow(Team.TEAM_LEFT, self.screen[0], self.screen[1])
+
+    def scored(self, team):
+        self.points[team] += 1
+
+    def get_winner(self):
+        if self.points[Team.TEAM_RIGHT] > self.points[Team.TEAM_LEFT]:
+            return Team.TEAM_RIGHT
+        elif self.points[Team.TEAM_LEFT] > self.points[Team.TEAM_LEFT]:
+            return Team.TEAM_LEFT
+        return None
+
+    def mainloop(self):
+        self.window.run()
+        self.swindow.run()
+        self.window.mainloop()
 
 
 if __name__ == '__main__':
-    MainWindow(1920, 1080).run()
+    Main(True, (1536, 960)).mainloop()
