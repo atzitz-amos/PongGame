@@ -1,6 +1,6 @@
 import enum
+import math
 import random
-import tkinter
 from tkinter import Toplevel, Tk, Label, Button, Canvas
 from tkinter.font import Font
 
@@ -67,7 +67,7 @@ class Bullet(Toplevel):
             return
         elif status == CollisionStatus.BOTTOM:
             return self.manager.bullet_hit(*res)
-        if self.collider.collide_bullet((bw.x - 10, bw.y + 10, bw.x + bw.width + 10, bw.y + bw.height + 10),
+        if self.collider.collide_bullet((bw.x, bw.y, bw.x + bw.width + 10, bw.y + bw.height + 10),
                                         (self.x, self.y)) == CollisionStatus.BOTTOM:
             return self.manager.bullet_hit(self.x, self.y + 1, self.x + 20, self.y - 15)
 
@@ -82,7 +82,6 @@ class LaserBeamBullet(Bullet):
 
     def cancel(self):
         print("cancelling")
-        self.laserbeam.cancel(self)
 
     def update_movement(self):
         super().update_movement()
@@ -92,16 +91,31 @@ class LaserBeam(Bullet):
 
     def __init__(self, x, y, collider, manager):
         Bullet.__init__(self, x, y, collider, manager)
-        print(self.y)
-        self["bg"] = "blue"
+        self["bg"] = "red"
+
+        self.wm_attributes("-alpha", 0.7)
+
         # self.overrideredirect(1)
         self.width = 10
         self.update_geometry()
 
         self.bullets = []
+        self.time_elapsed = 0
+        self.duration = manager.laserbeam_duration
+
+    @property
+    def fire_frequency(self):
+        """
+        0%: 300
+        100%: 10
+        """
+        return ((self.duration - self.time_elapsed) ** 3) / self.duration ** 3 * 30 + 50
 
     def update_movement(self):
         super().update_movement()
+        self.time_elapsed += 1
+        if self.time_elapsed % math.ceil(self.fire_frequency) == 0:
+            self.fire()
         for bullet in self.bullets:
             bullet.update_movement()
 
@@ -119,18 +133,38 @@ class LaserBeam(Bullet):
         print("fired")
         self.bullets.append(LaserBeamBullet(self.x, self.y + self.height, self.collider, self.manager, self))
 
-    def cancel(self, b):
-        # b.destroy()
-        # self.bullets.remove(b)
+    def cancel(self):
         pass
+
+    def cancel_laser(self):
+        bullets = self.bullets.copy()
+        self.bullets = []
+        for bullet in bullets:
+            bullet.destroy()
+
+    def move_x(self, x):
+        self.x = x
+        self.update_geometry()
+        for bullet in self.bullets:
+            bullet.x = self.x
+            bullet.update_geometry()
 
 
 class BouncingWindow(Toplevel):
-    speed = 3
+    speed = 5
 
-    def __init__(self, collider):
+    @property
+    def hurt_percentage(self):
+        total_area = self.width * self.height
+        hurt_area = sum(map(lambda territory: (territory[2] - territory[0]) * (territory[3] - territory[1]),
+                            self.collided_territory))
+        return abs(hurt_area / total_area)
+
+    def __init__(self, collider, manager):
         Toplevel.__init__(self)
         self.collider = collider
+        self.manager = manager
+
         self.alpha_color = "#add123"
 
         self.wm_resizable(False, False)
@@ -166,6 +200,9 @@ class BouncingWindow(Toplevel):
         if status != CollisionStatus.NO_COLLISION:
             self.change_direction(status)
         self.move()
+        print(self.hurt_percentage)
+        if self.hurt_percentage > 0.7:
+            self.manager.game_won()
 
     def move(self):
         self.set_position(int(self.x + self.direction[0]), int(self.y + self.direction[1]))
@@ -285,7 +322,7 @@ class MainWindow(Tk):
         self.wm_resizable(False, False)
 
         self.collider = ColliderNormal(screen_dim, self)
-        self.bouncing_window = BouncingWindow(self.collider)
+        self.bouncing_window = BouncingWindow(self.collider, self)
         self.bullet = None
 
         self.width = 300
@@ -312,6 +349,8 @@ class MainWindow(Tk):
         self.laserbeam = None
         self.laserbeam_time = 0
 
+        self.end_message = ""
+
     def change_position(self, key):
         if self.movement >= 0 and key == -1 or self.movement != 0 and key == 0 or self.movement <= 0 and key == 1:
             self.time = 0
@@ -325,13 +364,12 @@ class MainWindow(Tk):
         if self.bullet:
             self.bullet.update_movement()
         if self.laserbeam:
+            print(self.laserbeam.x, self.laserbeam.y)
             self.laserbeam.update_movement()
-            self.laserbeam.set_position(int(self.x + self.width / 2 - 5), self.laserbeam.y)
+            self.laserbeam.move_x(int(self.x + self.width / 2 - 5))
             self.laserbeam_time += 1
             if self.laserbeam_time > self.laserbeam_duration:
                 self.cancel_laserbeam()
-            elif self.laserbeam_time % 50 == 0:
-                self.laserbeam.fire()
         self.lift()
         self.focus_force()
         self.slide()
@@ -344,7 +382,7 @@ class MainWindow(Tk):
     def fire(self):
         if not self.laserbeam:
             if not self.bullet:
-                if random.random() < 0:
+                if random.random() < 0.2:
                     print("laserbeam")
                     self.laserbeam = LaserBeam(int(self.x + self.width / 2 - 5), self.y, self.collider, self)
                 else:
@@ -352,12 +390,15 @@ class MainWindow(Tk):
                     self.bullet = Bullet(int(self.x + self.width / 2 - 5), self.y, self.collider, self)
 
     def cancel_bullet(self):
-        self.bullet.destroy()
-        self.bullet = None
+        if self.bullet:
+            self.bullet.destroy()
+            self.bullet = None
 
     def cancel_laserbeam(self):
+        self.laserbeam.cancel_laser()
         self.laserbeam.destroy()
         self.laserbeam = None
+        self.laserbeam_time = 0
 
     def bullet_hit(self, hit_x, hit_y, hit_x2, hit_y2):
         self.cancel_bullet()
@@ -373,8 +414,12 @@ class MainWindow(Tk):
         self.x += int(self.movement * self.speed)
         self.update_geometry()
 
-    def end_game(self):
+    def end_game(self, won=False):
         self.bouncing_window.destroy()
+        if self.bullet:
+            self.bullet.destroy()
+        if self.laserbeam:
+            self.laserbeam.destroy()
 
         self.unbind("<Left>")
         self.unbind("<Right>")
@@ -385,9 +430,11 @@ class MainWindow(Tk):
 
         self.distance_center = (-self.x + self.get_center()[0], -self.y + self.get_center()[1])
 
-        speed_x, speed_y = self.distance_center[0] / (self.end_time), self.distance_center[1] / (self.end_time)
+        speed_x, speed_y = self.distance_center[0] / self.end_time, self.distance_center[1] / self.end_time
         speed_w, speed_h = (self.end_width - self.width) / (self.end_time), (self.end_height - self.height) / (
             self.end_time)
+
+        self.end_message = "Vous avez gagnez" if won else "Vous avez perdu"
 
         self.after(10, lambda: self.slide_end_game(speed_x, speed_y, speed_w, speed_h))
 
@@ -415,7 +462,7 @@ class MainWindow(Tk):
         print("end")
         font = Font(font=("Bahnschrift", 20, "normal"))
         lx, ly = self.end_width / 2 - font.measure("Vous avez perdu") / 2 - 20, self.end_height / 2 - 60
-        Label(self, text="Vous avez perdu !", font=font).place(x=lx, y=ly)
+        Label(self, text=self.end_message, font=font).place(x=lx, y=ly)
 
         Button(self, text="Rejouer", command=self.new_game).place(x=self.end_width / 2 - 70, y=ly + 50)
         Button(self, text="Quitter", command=self.destroy).place(x=self.end_width / 2 + 10, y=ly + 50)
@@ -424,6 +471,10 @@ class MainWindow(Tk):
         self.destroy()
         self.quit()
         new_game()
+
+    def game_won(self):
+        print("Won")
+        self.end_game(True)
 
 
 def new_game():
